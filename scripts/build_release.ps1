@@ -27,9 +27,7 @@ if (!(Test-Path $resolvedKeyPath)) {
 
 if (-not $SkipBuild) {
   $env:TAURI_SIGNING_PRIVATE_KEY = $resolvedKeyPath
-  if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -eq $null) {
-    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
-  }
+  Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 
   Write-Host "Building SciPilot $plainVersion with updater signing..."
   pnpm tauri build
