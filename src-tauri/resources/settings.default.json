@@ -1,0 +1,19 @@
+{
+  "default_provider": "llm",
+  "default_model": "gpt-4o",
+  "llm_model": "gpt-4o",
+  "ollama_model": "qwen2.5",
+  "image_gen_model": "",
+  "default_discipline": "generic",
+  "sidecar_auto_start": true,
+  "language": "zh",
+  "api_base_urls": {
+    "llm": "",
+    "image_gen": "",
+    "ollama": "http://localhost:11434/api/chat"
+  },
+  "api_keys": {
+    "llm": "",
+    "image_gen": ""
+  }
+}

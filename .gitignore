@@ -1,0 +1,53 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local dev config — never commit real API keys
+settings.json
+
+# Tauri build artefacts
+src-tauri/target
+src-tauri/binaries
+.tauri/*.key
+.tauri/*.key.pub
+.tauri/*.password
+release/
+sidecar/build/
+sidecar/dist/
+sidecar/*.spec
+sidecar/nuitka-crash-report.xml
+
+# Local temp dirs / dev logs
+tmp*/
+*.tmp
+direct-scipilot*.log
+pnpm-dev.log
+tauri-dev*.log
+
+# Python build artefacts
+**/__pycache__
+*.pyc
+*.pyo
+build/
+*.spec.bak
