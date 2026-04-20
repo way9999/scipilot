@@ -1,6 +1,6 @@
 [package]
 name = "scipilot"
-version = "0.1.1"
+version = "0.1.2"
 description = "SciPilot — AI-powered research copilot"
 authors = ["SciPilot"]
 edition = "2021"

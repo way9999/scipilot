@@ -916,7 +916,13 @@ class WritingTaskManager:
         if not process.is_alive():
             process.join(timeout=1)
             task["status"] = "failed"
-            task["error"] = task["error"] or "Task exited unexpectedly."
+            exit_code = process.exitcode
+            if task["error"]:
+                return
+            if exit_code is None:
+                task["error"] = "Task exited unexpectedly."
+            else:
+                task["error"] = f"Task exited unexpectedly (exit code {exit_code})."
 
     def _serialize(self, task: dict[str, Any]) -> dict[str, Any]:
         # Read progress from progress.json if available

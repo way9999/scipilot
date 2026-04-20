@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
 import os
 import sys
 from pathlib import Path
@@ -52,6 +53,9 @@ async def health():
 
 
 def main():
+    # Required for multiprocessing spawn in the frozen PyInstaller sidecar on Windows.
+    mp.freeze_support()
+
     parser = argparse.ArgumentParser(description="SciPilot sidecar server")
     parser.add_argument("--port", type=int, default=9960)
     parser.add_argument("--host", default="127.0.0.1")

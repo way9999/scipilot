@@ -17,6 +17,7 @@ class FakeProcess:
     def __init__(self, *, start_error: Exception | None = None) -> None:
         self._start_error = start_error
         self.alive = False
+        self.exitcode: int | None = None
         self.terminate_calls = 0
         self.kill_calls = 0
         self.join_calls: list[float | int | None] = []
@@ -32,10 +33,12 @@ class FakeProcess:
     def terminate(self) -> None:
         self.terminate_calls += 1
         self.alive = False
+        self.exitcode = -15
 
     def kill(self) -> None:
         self.kill_calls += 1
         self.alive = False
+        self.exitcode = -9
 
     def join(self, timeout: float | int | None = None) -> None:
         self.join_calls.append(timeout)
@@ -131,7 +134,7 @@ class WritingTaskManagerTests(unittest.TestCase):
 
         self.assertEqual(progress["step"], 3)
         self.assertEqual(progress["total"], 4)
-        self.assertEqual(progress["detail"], "section=2/4")
+        self.assertIn("boom", progress["detail"])
         self.assertIn("Methods", progress["label"])
         self.assertFalse(result["success"])
         self.assertIn("Methods", result["error"])
@@ -154,6 +157,21 @@ class WritingTaskManagerTests(unittest.TestCase):
         self.assertEqual(progress["total"], len(writing.PROGRESS_STEPS["literature_review"]))
         self.assertEqual(progress["label"], writing.PROGRESS_STEPS["literature_review"][0])
         self.assertTrue(result["success"])
+
+    def test_get_reports_exit_code_when_worker_exits_without_result(self) -> None:
+        manager = writing.WritingTaskManager()
+        manager._ctx = FakeContext()
+
+        started = manager.start("proposal", {"topic": "alpha"})
+        task = manager._tasks[started["task_id"]]
+        process = task["process"]
+        process.alive = False
+        process.exitcode = 193
+
+        payload = manager.get(started["task_id"])
+
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error"], "Task exited unexpectedly (exit code 193).")
 
 
 if __name__ == "__main__":
