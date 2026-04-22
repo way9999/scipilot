@@ -48,8 +48,8 @@
     },
     "resources": {
       "../sidecar": "sidecar",
-      "../../tools": "tools",
-      "../../references": "references",
+      "../tools": "tools",
+      "../references": "references",
       "resources/settings.default.json": "settings.default.json"
     },
     "icon": [

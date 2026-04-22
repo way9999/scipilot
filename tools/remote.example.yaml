@@ -1,0 +1,52 @@
+# SSH远程GPU服务器配置示例
+# 复制为 remote.yaml 并填入实际信息（remote.yaml 已在 .gitignore 中）
+
+# 服务器地址
+host: gpu.example.com
+port: 22
+username: user
+
+# 认证方式（二选一）
+auth:
+  method: key                    # 使用SSH密钥
+  key_path: ~/.ssh/id_rsa
+  # passphrase: $SSH_PASSPHRASE  # 可用环境变量
+
+  # method: password             # 或使用密码
+  # password: $SSH_PASSWORD      # 强烈建议使用环境变量
+
+# 远程工作目录（会自动创建）
+remote_workdir: /home/user/experiment
+
+# 上传的本地路径（相对于执行命令的目录）
+upload_paths:
+  - src/
+  - configs/
+  - train.py
+  - requirements.txt
+
+# 上传时排除的文件模式
+upload_excludes:
+  - __pycache__
+  - "*.pyc"
+  - .git
+  - .DS_Store
+  - "*.egg-info"
+  - .venv
+  - venv
+
+# 训练命令（在 remote_workdir 下执行）
+train_command: "python train.py --config configs/base.yaml --seed 42"
+
+# 远程结果目录（相对于 remote_workdir）
+results_dir: results/
+
+# 下载时排除的文件模式
+download_excludes:
+  - __pycache__
+  - "*.pyc"
+  - .git
+
+# 连接参数
+connect_timeout: 15   # 秒
+poll_interval_seconds: 30  # 预留给外部轮询用
