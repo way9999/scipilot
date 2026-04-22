@@ -133,28 +133,39 @@ pub fn run() {
 
             let sidecar_resource_root = effective_resource_root.to_string_lossy().to_string();
             let sidecar_user_root = effective_user_root.to_string_lossy().to_string();
+            let leaked_sidecar_mgr: &'static sidecar::SidecarManager = Box::leak(sidecar_mgr);
             if settings.sidecar_auto_start {
-                if let Err(e) = sidecar_mgr.start(
-                    &sidecar_resource_root,
-                    &sidecar_user_root,
-                    &config_path.to_string_lossy(),
-                    &loaded_keys,
-                    settings.agent_enabled,
-                    &settings.agent_type,
-                    &settings.agent_path,
-                    settings.agent_max_turns,
-                    settings.agent_timeout_secs,
-                    settings.agent_auto_fix,
-                    settings.agent_auto_supplement,
-                ) {
-                    eprintln!("Warning: Failed to start sidecar: {}", e);
-                }
+                let config_path_str = config_path.to_string_lossy().to_string();
+                let loaded_keys_clone = loaded_keys.clone();
+                let agent_enabled = settings.agent_enabled;
+                let agent_type = settings.agent_type.clone();
+                let agent_path = settings.agent_path.clone();
+                let agent_max_turns = settings.agent_max_turns;
+                let agent_timeout_secs = settings.agent_timeout_secs;
+                let agent_auto_fix = settings.agent_auto_fix;
+                let agent_auto_supplement = settings.agent_auto_supplement;
+                std::thread::spawn(move || {
+                    if let Err(e) = leaked_sidecar_mgr.start(
+                        &sidecar_resource_root,
+                        &sidecar_user_root,
+                        &config_path_str,
+                        &loaded_keys_clone,
+                        agent_enabled,
+                        &agent_type,
+                        &agent_path,
+                        agent_max_turns,
+                        agent_timeout_secs,
+                        agent_auto_fix,
+                        agent_auto_supplement,
+                    ) {
+                        eprintln!("Warning: Failed to start sidecar: {}", e);
+                    }
+                });
             } else {
                 eprintln!("Sidecar auto-start disabled in settings");
             }
             // Intentionally leak — Drop would kill the sidecar before Tauri's
             // event loop ends.
-            Box::leak(sidecar_mgr);
 
             let app_state = AppState {
                 sidecar_port,
