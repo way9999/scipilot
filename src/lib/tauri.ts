@@ -1,5 +1,6 @@
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import * as updater from '@tauri-apps/plugin-updater'
 import type {
   SidecarResponse,
@@ -99,6 +100,21 @@ export async function pickReferenceFiles(
   return invoke('pick_files', { initialPath: initialPath || null })
 }
 
+export interface HostPlatform {
+  os: string
+  arch: string
+  updaterTarget: string
+}
+
+let hostPlatformPromise: Promise<HostPlatform> | null = null
+
+export async function getHostPlatform(): Promise<HostPlatform> {
+  if (!hostPlatformPromise) {
+    hostPlatformPromise = invoke<HostPlatform>('get_host_platform')
+  }
+  return hostPlatformPromise
+}
+
 export async function detectAgentCli(
   agentType: string
 ): Promise<string | null> {
@@ -112,6 +128,14 @@ export async function batchDownload(recordIds: string[]): Promise<SidecarRespons
 
 export async function batchVerify(recordIds: string[]): Promise<SidecarResponse> {
   return invoke('batch_verify', { recordIds })
+}
+
+export async function crawlPaper(recordId: string): Promise<SidecarResponse> {
+  return invoke('crawl_paper', { recordId })
+}
+
+export async function batchCrawl(recordIds: string[]): Promise<SidecarResponse> {
+  return invoke('batch_crawl', { recordIds })
 }
 
 export async function getRecommendations(): Promise<SidecarResponse> {
@@ -241,6 +265,86 @@ export interface UpdateInfo {
   version?: string
   date?: string
   body?: string
+  downloadUrl?: string
+  source?: 'native' | 'manifest'
+  error?: string
+}
+
+const UPDATE_MANIFEST_URL = 'https://github.com/way9999/scipilot/releases/latest/download/latest.json'
+
+function normalizeVersion(version?: string | null): string {
+  return String(version ?? '').trim().replace(/^v/i, '')
+}
+
+function compareVersions(a: string, b: string): number {
+  const aParts = normalizeVersion(a).split('.').map((part) => Number.parseInt(part, 10) || 0)
+  const bParts = normalizeVersion(b).split('.').map((part) => Number.parseInt(part, 10) || 0)
+  const maxLen = Math.max(aParts.length, bParts.length)
+  for (let i = 0; i < maxLen; i += 1) {
+    const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+function extractDownloadUrl(
+  platforms: Record<string, { url?: string }> | undefined,
+  host: HostPlatform
+): string | undefined {
+  if (!platforms) return undefined
+  const target = host.updaterTarget
+  const fallbackByOs = host.os === 'windows'
+    ? ['windows-x86_64-nsis', target, 'windows-x86_64', 'windows-x86_64-msi']
+    : host.os === 'linux'
+      ? [target, 'linux-x86_64']
+      : host.os === 'darwin'
+        ? [target, 'darwin-aarch64', 'darwin-x86_64']
+        : [target]
+
+  for (const key of fallbackByOs) {
+    const url = platforms[key]?.url
+    if (url) return url
+  }
+
+  return Object.values(platforms).find((entry) => entry?.url)?.url
+}
+
+async function checkUpdatesViaManifest(): Promise<UpdateInfo> {
+  const [currentVersion, response, host] = await Promise.all([
+    getVersion(),
+    fetch(UPDATE_MANIFEST_URL, { cache: 'no-store' }),
+    getHostPlatform(),
+  ])
+  if (!response.ok) {
+    throw new Error(`manifest_http_${response.status}`)
+  }
+  const manifest = await response.json() as {
+    version?: string
+    notes?: string
+    pub_date?: string
+    platforms?: Record<string, { url?: string }>
+  }
+  const nextVersion = normalizeVersion(manifest.version)
+  const current = normalizeVersion(currentVersion)
+  const downloadUrl = extractDownloadUrl(manifest.platforms, host)
+  if (nextVersion && compareVersions(nextVersion, current) > 0) {
+    return {
+      available: true,
+      version: nextVersion,
+      date: manifest.pub_date,
+      body: manifest.notes,
+      downloadUrl,
+      source: 'manifest',
+    }
+  }
+  return {
+    available: false,
+    version: nextVersion || current,
+    date: manifest.pub_date,
+    body: manifest.notes,
+    downloadUrl,
+    source: 'manifest',
+  }
 }
 
 export async function checkForUpdates(): Promise<UpdateInfo> {
@@ -252,11 +356,26 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
         version: update.version,
         date: update.date,
         body: update.body,
+        source: 'native',
       }
     }
     return { available: false }
-  } catch {
-    return { available: false }
+  } catch (error) {
+    try {
+      const manifestResult = await checkUpdatesViaManifest()
+      return {
+        ...manifestResult,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    } catch (fallbackError) {
+      return {
+        available: false,
+        error: [
+          error instanceof Error ? error.message : String(error),
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        ].join(' | '),
+      }
+    }
   }
 }
 
@@ -289,10 +408,24 @@ export async function downloadAndInstallUpdate(
       })
       return true
     }
+  } catch {
+    const manifestResult = await checkUpdatesViaManifest().catch(() => null)
+    if (manifestResult?.available && manifestResult.downloadUrl) {
+      await openUrl(manifestResult.downloadUrl)
+      return true
+    }
     return false
+  }
+  try {
+    const manifestResult = await checkUpdatesViaManifest()
+    if (manifestResult.available && manifestResult.downloadUrl) {
+      await openUrl(manifestResult.downloadUrl)
+      return true
+    }
   } catch {
     return false
   }
+  return false
 }
 
 // License

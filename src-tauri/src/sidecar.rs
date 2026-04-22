@@ -144,13 +144,7 @@ impl SidecarLaunch {
         let root = PathBuf::from(resource_root);
 
         // Try bundled exe first
-        for bundled_exe in [
-            root.join("sidecar").join("scipilot-sidecar.exe"),
-            root.join("sidecar")
-                .join("dist")
-                .join("scipilot-sidecar")
-                .join("scipilot-sidecar.exe"),
-        ] {
+        for bundled_exe in bundled_sidecar_candidates(&root) {
             if bundled_exe.exists() {
                 return Ok(Self::BundledExe {
                     exe_path: bundled_exe,
@@ -218,6 +212,22 @@ impl SidecarLaunch {
     }
 }
 
+fn bundled_sidecar_candidates(root: &PathBuf) -> Vec<PathBuf> {
+    let executable_name = if cfg!(target_os = "windows") {
+        "scipilot-sidecar.exe"
+    } else {
+        "scipilot-sidecar"
+    };
+
+    vec![
+        root.join("sidecar").join(executable_name),
+        root.join("sidecar")
+            .join("dist")
+            .join("scipilot-sidecar")
+            .join(executable_name),
+    ]
+}
+
 fn apply_common_env(cmd: &mut Command, config_path: &str, user_root: &str, api_keys: &HashMap<String, String>) {
     cmd.env("SCIPILOT_SETTINGS_PATH", config_path)
         .env("SCIPILOT_USER_ROOT", user_root);
@@ -226,6 +236,9 @@ fn apply_common_env(cmd: &mut Command, config_path: &str, user_root: &str, api_k
         ("s2", "S2_API_KEY"),
         ("semantic_scholar", "S2_API_KEY"),
         ("scholarly_proxy", "SCHOLARLY_PROXY"),
+        ("ieee_xplore", "IEEE_API_KEY"),
+        ("openalex", "OPENALEX_API_KEY"),
+        ("serpapi", "SERPAPI_KEY"),
     ] {
         if let Some(val) = api_keys.get(key_name) {
             if !val.is_empty() {

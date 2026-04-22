@@ -197,6 +197,8 @@ pub fn run() {
             commands::research::get_sidecar_url,
             commands::research::batch_download,
             commands::research::batch_verify,
+            commands::research::crawl_paper,
+            commands::research::batch_crawl,
             commands::research::landscape_analyze,
             commands::research::landscape_report,
             commands::research::generate_paper_draft,
@@ -222,12 +224,14 @@ pub fn run() {
             commands::llm::get_providers,
             commands::llm::get_llm_config,
             commands::llm::test_llm_connection,
+            commands::llm::group_chat_stream,
             // Settings commands
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::get_project_root,
             commands::settings::pick_directory,
             commands::settings::pick_files,
+            commands::settings::get_host_platform,
             commands::settings::detect_agent_cli,
             // License commands
             commands::license::activate_license,

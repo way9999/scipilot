@@ -7,11 +7,23 @@ interface PaperTableProps {
   papers: ResearchWorkbenchPaper[]
   onDownload?: (recordId: string) => void
   downloadingId?: string | null
+  onCrawl?: (recordId: string) => void
+  crawlingId?: string | null
+  onOpenFile?: (relPath: string) => void
 }
 
-const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) => {
+const PaperTable: FC<PaperTableProps> = ({
+  papers,
+  onDownload,
+  downloadingId,
+  onCrawl,
+  crawlingId,
+  onOpenFile,
+}) => {
   const [filter, setFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'verified' | 'downloaded'>('all')
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'verified' | 'downloaded' | 'content_ready'
+  >('all')
   const t = useT()
 
   const filtered = useMemo(() => {
@@ -25,12 +37,41 @@ const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) 
       const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'verified' && p.verified) ||
-        (statusFilter === 'downloaded' && isDownloaded(p))
+        (statusFilter === 'downloaded' && isDownloaded(p)) ||
+        (statusFilter === 'content_ready' && p.content_crawled)
       return matchesQuery && matchesStatus
     })
   }, [papers, filter, statusFilter])
 
-  const headers = [t.papers_col_title, t.papers_col_year, t.papers_col_source, t.papers_col_status, t.papers_col_actions]
+  const headers = [
+    t.papers_col_title,
+    t.papers_col_year,
+    t.papers_col_source,
+    t.papers_col_status,
+    t.papers_col_actions,
+  ]
+
+  const actionBtn = (
+    label: string,
+    onClick: () => void,
+    disabled?: boolean,
+  ) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: 'none',
+        border: 'none',
+        color: disabled ? 'var(--text-tertiary)' : 'var(--accent)',
+        cursor: disabled ? 'default' : 'pointer',
+        padding: 0,
+        fontSize: 13,
+        textAlign: 'left' as const,
+      }}
+    >
+      {label}
+    </button>
+  )
 
   return (
     <div
@@ -60,7 +101,9 @@ const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) 
         />
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as typeof statusFilter)
+          }
           style={{
             padding: '8px 12px',
             borderRadius: 8,
@@ -73,6 +116,7 @@ const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) 
           <option value="all">{t.papers_all}</option>
           <option value="verified">{t.papers_verified}</option>
           <option value="downloaded">{t.papers_downloaded}</option>
+          <option value="content_ready">{t.papers_content_ready}</option>
         </select>
       </div>
 
@@ -132,7 +176,15 @@ const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) 
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {paper.verified && <Chip color="#10b981">{t.papers_verified}</Chip>}
                     {isDownloaded(paper) && <Chip color="#3b82f6">{t.papers_downloaded}</Chip>}
-                    {!paper.verified && !isDownloaded(paper) && <Chip>{t.papers_indexed}</Chip>}
+                    {paper.content_crawled && (
+                      <Chip color="#8b5cf6">
+                        {t.papers_crawled}
+                        {paper.content_word_count ? ` (${paper.content_word_count} ${t.papers_words})` : ''}
+                      </Chip>
+                    )}
+                    {!paper.verified && !isDownloaded(paper) && !paper.content_crawled && (
+                      <Chip>{t.papers_indexed}</Chip>
+                    )}
                   </div>
                 </td>
                 <td style={{ padding: '12px 14px' }}>
@@ -147,23 +199,22 @@ const PaperTable: FC<PaperTableProps> = ({ papers, onDownload, downloadingId }) 
                         {t.papers_source}
                       </a>
                     )}
-                    {!paper.local_path && paper.record_id && onDownload && (
-                      <button
-                        onClick={() => onDownload(paper.record_id!)}
-                        disabled={downloadingId === paper.record_id}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'var(--accent)',
-                          cursor: 'pointer',
-                          padding: 0,
-                          fontSize: 13,
-                          textAlign: 'left',
-                        }}
-                      >
-                        {downloadingId === paper.record_id ? t.papers_downloading : t.papers_download}
-                      </button>
-                    )}
+                    {!paper.local_path && paper.record_id && onDownload &&
+                      actionBtn(
+                        downloadingId === paper.record_id ? t.papers_downloading : t.papers_download,
+                        () => onDownload(paper.record_id!),
+                        downloadingId === paper.record_id,
+                      )}
+                    {paper.local_path && onOpenFile &&
+                      actionBtn(t.papers_open_pdf, () => onOpenFile(paper.local_path!))}
+                    {!paper.content_crawled && paper.record_id && onCrawl &&
+                      actionBtn(
+                        crawlingId === paper.record_id ? t.papers_crawling : t.papers_crawl,
+                        () => onCrawl(paper.record_id!),
+                        crawlingId === paper.record_id,
+                      )}
+                    {paper.content_crawled && paper.content_path && onOpenFile &&
+                      actionBtn(t.papers_open_content, () => onOpenFile(paper.content_path!))}
                   </div>
                 </td>
               </tr>

@@ -1,5 +1,6 @@
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -7,6 +8,35 @@ pub struct SidecarResponse {
     pub success: bool,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
+}
+
+fn resolve_user_path(project_root: &str, path_value: &str) -> Result<PathBuf, String> {
+    let raw = PathBuf::from(path_value);
+    let candidate = if raw.is_absolute() {
+        raw
+    } else {
+        Path::new(project_root).join(&raw)
+    };
+
+    if candidate.exists() {
+        return Ok(strip_windows_verbatim_prefix(candidate));
+    }
+
+    Err(format!("File not found: {}", path_value))
+}
+
+#[cfg(target_os = "windows")]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let rendered = path.to_string_lossy();
+    if let Some(stripped) = rendered.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Proxy a request to the Python sidecar.
@@ -179,6 +209,26 @@ pub async fn batch_verify(
     let base_url = format!("http://127.0.0.1:{}", state.sidecar_port);
     let body = serde_json::json!({ "record_ids": record_ids });
     sidecar_request(&base_url, "POST", "/api/batch-verify", Some(body)).await
+}
+
+#[tauri::command]
+pub async fn crawl_paper(
+    state: State<'_, AppState>,
+    record_id: String,
+) -> Result<SidecarResponse, String> {
+    let base_url = format!("http://127.0.0.1:{}", state.sidecar_port);
+    let body = serde_json::json!({ "record_id": record_id });
+    sidecar_request(&base_url, "POST", "/api/crawl", Some(body)).await
+}
+
+#[tauri::command]
+pub async fn batch_crawl(
+    state: State<'_, AppState>,
+    record_ids: Vec<String>,
+) -> Result<SidecarResponse, String> {
+    let base_url = format!("http://127.0.0.1:{}", state.sidecar_port);
+    let body = serde_json::json!({ "record_ids": record_ids });
+    sidecar_request(&base_url, "POST", "/api/batch-crawl", Some(body)).await
 }
 
 #[tauri::command]
@@ -478,10 +528,7 @@ pub async fn open_file_in_system(
     state: State<'_, AppState>,
     rel_path: String,
 ) -> Result<(), String> {
-    let full = std::path::Path::new(&state.project_root).join(&rel_path);
-    if !full.exists() {
-        return Err(format!("File not found: {}", rel_path));
-    }
+    let full = resolve_user_path(&state.project_root, &rel_path)?;
     opener::open(&full)
         .map_err(|e| format!("Cannot open {}: {}", rel_path, e))
 }
@@ -491,30 +538,81 @@ pub async fn show_in_file_manager(
     state: State<'_, AppState>,
     rel_path: String,
 ) -> Result<(), String> {
-    let full = std::path::Path::new(&state.project_root).join(&rel_path);
-    if !full.exists() {
-        return Err(format!("File not found: {}", rel_path));
-    }
+    let full = resolve_user_path(&state.project_root, &rel_path)?;
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", full.display()))
+        let mut command = std::process::Command::new("explorer");
+        if full.is_dir() {
+            command.arg(&full);
+        } else {
+            command.arg("/select,").arg(&full);
+        }
+        command
             .spawn()
             .map_err(|e| format!("Cannot open folder: {}", e))?;
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .args(["-R", &full.to_string_lossy()])
-            .spawn()
-            .map_err(|e| format!("Cannot open folder: {}", e))?;
+        if full.is_dir() {
+            std::process::Command::new("open")
+                .arg(&full)
+                .spawn()
+                .map_err(|e| format!("Cannot open folder: {}", e))?;
+        } else {
+            std::process::Command::new("open")
+                .args(["-R", &full.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("Cannot open folder: {}", e))?;
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        let parent = full.parent().unwrap_or(&full);
-        opener::open(parent).map_err(|e| format!("Cannot open folder: {}", e))?;
+        let target = if full.is_dir() {
+            full.as_path()
+        } else {
+            full.parent().unwrap_or(&full)
+        };
+        opener::open(target).map_err(|e| format!("Cannot open folder: {}", e))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_user_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn resolve_user_path_supports_relative_paths() {
+        let root = std::env::temp_dir().join(format!("scipilot-rel-{}", std::process::id()));
+        let nested = root.join("output").join("exports");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("paper.docx");
+        std::fs::write(&file, b"ok").unwrap();
+
+        let resolved = resolve_user_path(root.to_string_lossy().as_ref(), "output/exports/paper.docx").unwrap();
+        assert_eq!(resolved, file);
+
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_user_path_supports_absolute_paths() {
+        let root = std::env::temp_dir().join(format!("scipilot-abs-root-{}", std::process::id()));
+        let other_root = std::env::temp_dir().join(format!("scipilot-abs-file-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&other_root).unwrap();
+        let file = other_root.join("paper.docx");
+        std::fs::write(&file, b"ok").unwrap();
+
+        let resolved = resolve_user_path(root.to_string_lossy().as_ref(), file.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(resolved, PathBuf::from(&file));
+
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&other_root);
+    }
 }
 
 #[tauri::command]

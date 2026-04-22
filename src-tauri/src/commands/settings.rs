@@ -1,11 +1,63 @@
 use crate::state::{AppSettings, AppState};
+use serde::Serialize;
 use tauri::State;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 use std::process::Command;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostPlatform {
+    pub os: String,
+    pub arch: String,
+    pub updater_target: String,
+}
+
+fn normalize_arch(raw: &str) -> &str {
+    match raw {
+        "x86_64" | "amd64" => "x86_64",
+        "x86" | "i386" | "i586" | "i686" => "i686",
+        "aarch64" | "arm64" => "aarch64",
+        "arm" | "armv7" | "armv7l" => "armv7",
+        other => other,
+    }
+}
+
+fn host_platform() -> HostPlatform {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = normalize_arch(std::env::consts::ARCH);
+    HostPlatform {
+        os: os.to_string(),
+        arch: arch.to_string(),
+        updater_target: format!("{}-{}", os, arch),
+    }
+}
+
+#[tauri::command]
+pub async fn get_host_platform() -> Result<HostPlatform, String> {
+    Ok(host_platform())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_command_capture(command: &mut Command) -> Result<std::process::Output, String> {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .output()
+        .map_err(|e| format!("Failed to run system dialog command: {}", e))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn trim_command_output(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
 
 #[tauri::command]
 pub async fn get_settings(
@@ -107,10 +159,74 @@ pub async fn pick_directory(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let initial_clause = initial_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!(" default location POSIX file \"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+            .unwrap_or_default();
+        let script = format!(
+            "POSIX path of (choose folder with prompt \"Select project directory\"{})",
+            initial_clause
+        );
+        let output = run_command_capture(
+            Command::new("osascript")
+                .args(["-e", &script])
+        )?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let selected = trim_command_output(&output);
+        if selected.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let initial = initial_path.unwrap_or_default();
+        let zenity_filename = if initial.trim().is_empty() {
+            None
+        } else {
+            Some(format!("--filename={}/", initial.trim_end_matches('/')))
+        };
+
+        let mut zenity = Command::new("zenity");
+        zenity.args(["--file-selection", "--directory", "--title=Select project directory"]);
+        if let Some(filename_arg) = zenity_filename.as_deref() {
+            zenity.arg(filename_arg);
+        }
+        if let Ok(output) = run_command_capture(&mut zenity) {
+            if output.status.success() {
+                let selected = trim_command_output(&output);
+                return if selected.is_empty() { Ok(None) } else { Ok(Some(selected)) };
+            }
+        }
+
+        let mut kdialog = Command::new("kdialog");
+        kdialog.arg("--getexistingdirectory");
+        if !initial.trim().is_empty() {
+            kdialog.arg(initial.trim());
+        }
+        let output = run_command_capture(&mut kdialog)?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let selected = trim_command_output(&output);
+        if selected.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = initial_path;
-        Err("Directory picker is only implemented on Windows.".to_string())
+        Err("Directory picker is not implemented on this platform.".to_string())
     }
 }
 
@@ -170,10 +286,102 @@ pub async fn pick_files(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let initial_clause = initial_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!(" default location POSIX file \"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+            .unwrap_or_default();
+        let script = format!(
+            "set chosenFiles to choose file with prompt \"Select reference files\" with multiple selections allowed true{}\
+\nset AppleScript's text item delimiters to linefeed\
+\nset outText to \"\"\
+\nrepeat with f in chosenFiles\
+\n  set outText to outText & POSIX path of f & linefeed\
+\nend repeat\
+\nreturn outText",
+            initial_clause
+        );
+        let output = run_command_capture(
+            Command::new("osascript")
+                .args(["-e", &script])
+        )?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let selected: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        if selected.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let initial = initial_path.unwrap_or_default();
+        let filter = "Reference Files | *.pdf *.txt *.md *.docx *.png *.jpg *.jpeg *.bmp *.webp *.svg";
+        let zenity_filename = if initial.trim().is_empty() {
+            None
+        } else {
+            Some(format!("--filename={}/", initial.trim_end_matches('/')))
+        };
+
+        let mut zenity = Command::new("zenity");
+        zenity.args([
+            "--file-selection",
+            "--multiple",
+            "--separator=\n",
+            "--title=Select reference files",
+            "--file-filter",
+            filter,
+        ]);
+        if let Some(filename_arg) = zenity_filename.as_deref() {
+            zenity.arg(filename_arg);
+        }
+        if let Ok(output) = run_command_capture(&mut zenity) {
+            if output.status.success() {
+                let selected: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|line| line.trim().to_string())
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                if !selected.is_empty() {
+                    return Ok(Some(selected));
+                }
+            }
+        }
+
+        let mut kdialog = Command::new("kdialog");
+        kdialog.args(["--getopenfilename", "--multiple", "--separate-output"]);
+        if !initial.trim().is_empty() {
+            kdialog.arg(initial.trim());
+        }
+        let output = run_command_capture(&mut kdialog)?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let selected: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        if selected.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = initial_path;
-        Err("File picker is only implemented on Windows.".to_string())
+        Err("File picker is not implemented on this platform.".to_string())
     }
 }
 

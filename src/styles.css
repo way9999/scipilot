@@ -167,6 +167,111 @@ input, select, textarea {
   font-size: 13px;
 }
 
+.markdown-body.thesis-preview {
+  color: var(--text-primary);
+}
+
+.markdown-body.thesis-preview p {
+  margin: 0 0 0.95rem;
+}
+
+.markdown-body.thesis-preview .katex-display {
+  margin: 1.25rem 0 0.35rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0.1rem 0.35rem;
+}
+
+.markdown-body.thesis-preview .katex-display > .katex {
+  font-size: 1.06em;
+}
+
+.markdown-body.thesis-preview .markdown-figure-image {
+  display: block;
+  max-width: min(100%, 780px);
+  max-height: 560px;
+  margin: 1.35rem auto 0.45rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+  background: #fff;
+  object-fit: contain;
+}
+
+.markdown-body.thesis-preview .markdown-figure-caption {
+  margin: 0 0 1.15rem;
+  text-align: center;
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.markdown-body.thesis-preview .markdown-table-caption {
+  margin: 1.15rem 0 0.45rem;
+  text-align: center;
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.markdown-body.thesis-preview .markdown-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1.3rem;
+  padding-bottom: 0.2rem;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table {
+  min-width: 680px;
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-top: 2px solid color-mix(in srgb, var(--text-primary) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--text-primary) 55%, transparent);
+  box-shadow: none;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table thead th {
+  border-bottom: 1.5px solid color-mix(in srgb, var(--text-primary) 38%, transparent);
+  background: transparent;
+  text-align: center;
+  font-weight: 700;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  vertical-align: top;
+  text-align: center;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table th,
+.markdown-body.thesis-preview .markdown-thesis-table td {
+  border-left: none;
+  border-right: none;
+  padding: 0.58rem 0.75rem;
+}
+
+.markdown-body.thesis-preview .markdown-thesis-table tbody td:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+
+.markdown-body.thesis-preview .markdown-placeholder-callout {
+  margin: 1rem 0 1.2rem;
+  border-left-width: 4px;
+  border-left-color: #b7791f;
+  background: #fff7db;
+  color: #6b4e16;
+}
+
+.markdown-body.thesis-preview .markdown-figure-placeholder-title {
+  margin-bottom: 0.45rem;
+  font-weight: 700;
+}
+
 .markdown-body th, .markdown-body td {
   padding: 6px 10px;
   border: 1px solid var(--border);

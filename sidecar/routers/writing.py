@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from tools.text_safety import safe_json_dumps, sanitize_utf8_text
 
 router = APIRouter(prefix="/writing", tags=["writing"])
 
@@ -48,6 +49,9 @@ class TopicRequest(BaseModel):
 
 class PresentationRequest(TopicRequest):
     deck_type: str = Field(default="proposal_review")
+    target_audience: str = Field(default="")
+    style: str = Field(default="")
+    page_count: int = Field(default=0)
 
 
 class RefinementRequest(BaseModel):
@@ -79,6 +83,7 @@ class ExportPptxRequest(BaseModel):
     topic: str | None = None
     language: str = Field(default="auto")
     deck_type: str = Field(default="proposal_review")
+    widescreen: bool = Field(default=True)
 
 
 def _to_relative(path_value: str | None) -> str | None:
@@ -104,6 +109,7 @@ def _unique_paths(*groups: list[str | None]) -> list[str]:
 
 
 MAX_REFERENCE_FILES = 20
+MAX_REFERENCE_FILE_CHARS = 12000
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".svg", ".gif", ".tiff", ".tif"}
 MAX_PROGRESS_EVENTS = 12
 PROGRESS_WRITE_LOCK = threading.Lock()
@@ -140,16 +146,16 @@ def _extract_reference_file_content(file_paths: list[str]) -> list[dict[str, Any
                 from pypdf import PdfReader
                 reader = PdfReader(str(path))
                 text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages)
-                results.append({"path": file_path, "filename": path.name, "content": text[:60000], "pages": len(reader.pages)})
+                results.append({"path": file_path, "filename": path.name, "content": text[:MAX_REFERENCE_FILE_CHARS], "pages": len(reader.pages)})
             elif suffix in (".txt", ".md", ".markdown"):
                 text = path.read_text(encoding="utf-8", errors="ignore")
-                results.append({"path": file_path, "filename": path.name, "content": text[:60000]})
+                results.append({"path": file_path, "filename": path.name, "content": text[:MAX_REFERENCE_FILE_CHARS]})
             elif suffix == ".docx":
                 try:
                     import docx
                     doc = docx.Document(str(path))
                     text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
-                    results.append({"path": file_path, "filename": path.name, "content": text[:60000]})
+                    results.append({"path": file_path, "filename": path.name, "content": text[:MAX_REFERENCE_FILE_CHARS]})
                 except ImportError:
                     results.append({"path": file_path, "filename": path.name, "error": "python-docx not installed"})
             elif suffix in IMAGE_EXTENSIONS:
@@ -158,7 +164,7 @@ def _extract_reference_file_content(file_paths: list[str]) -> list[dict[str, Any
             else:
                 text = path.read_text(encoding="utf-8", errors="ignore")
                 if text.strip():
-                    results.append({"path": file_path, "filename": path.name, "content": text[:60000]})
+                    results.append({"path": file_path, "filename": path.name, "content": text[:MAX_REFERENCE_FILE_CHARS]})
                 else:
                     results.append({"path": file_path, "filename": path.name, "error": f"Unsupported file type: {suffix}"})
         except Exception as exc:
@@ -674,7 +680,7 @@ def _worker_entry(mode: str, payload: dict[str, Any], result_path: str) -> None:
         result = handler(payload)
         result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text(
-            json.dumps({"success": True, "result": result}, ensure_ascii=False, indent=2),
+            safe_json_dumps({"success": True, "result": result}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as exc:  # pragma: no cover
@@ -686,12 +692,12 @@ def _worker_entry(mode: str, payload: dict[str, Any], result_path: str) -> None:
             _current_step_idx + 1 if steps else 0,
             len(steps),
             _step_label,
-            f"任务失败：{exc}",
+            sanitize_utf8_text(f"任务失败：{exc}"),
             phase=_step_phases.get(_current_step_idx + 1),
         )
         result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text(
-            json.dumps({"success": False, "error": _friendly_error(exc, _step_label)}, ensure_ascii=False, indent=2),
+            safe_json_dumps({"success": False, "error": _friendly_error(exc, _step_label)}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -775,7 +781,7 @@ def _worker_entry(mode: str, payload: dict[str, Any], result_path: str) -> None:
         result = handler(payload)
         result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text(
-            json.dumps({"success": True, "result": result}, ensure_ascii=False, indent=2),
+            safe_json_dumps({"success": True, "result": result}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as exc:  # pragma: no cover
@@ -788,12 +794,12 @@ def _worker_entry(mode: str, payload: dict[str, Any], result_path: str) -> None:
             _current_step_idx + 1 if steps else 0,
             len(steps),
             _step_label,
-            f"任务失败：{exc}",
+            sanitize_utf8_text(f"任务失败：{exc}"),
             phase=_step_phases.get(_current_step_idx + 1),
         )
         result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text(
-            json.dumps({"success": False, "error": _friendly_error(exc, _step_label)}, ensure_ascii=False, indent=2),
+            safe_json_dumps({"success": False, "error": _friendly_error(exc, _step_label)}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -1008,8 +1014,17 @@ def _write_progress(result_path: str, step: int, total: int, label: str, detail:
     """Write progress info to progress.json next to result.json."""
     try:
         p = Path(result_path).parent / "progress.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
-            json.dumps({"step": step, "total": total, "label": label, "detail": detail}, ensure_ascii=False),
+            safe_json_dumps(
+                {
+                    "step": step,
+                    "total": total,
+                    "label": sanitize_utf8_text(label),
+                    "detail": sanitize_utf8_text(detail),
+                },
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
     except Exception:
@@ -1060,8 +1075,9 @@ TASK_PROGRESS_STEPS = {
         "正在生成问答结果...",
     ],
     "presentation": [
-        "正在生成汇报内容...",
-        "正在构建演示文稿...",
+        "正在生成演示大纲...",
+        "正在生成幻灯片内容...",
+        "正在整理演示文稿...",
     ],
     "export_docx": [
         "正在准备导出文档...",
@@ -1082,7 +1098,7 @@ PROGRESS_STEP_PHASES = {
     "refinement": {1: "scan", 2: "polish", 3: "finalize"},
     "research_qa": {1: "scan", 2: "drafting"},
     "qa": {1: "scan", 2: "drafting"},
-    "presentation": {1: "drafting", 2: "finalize"},
+    "presentation": {1: "outline", 2: "drafting", 3: "finalize"},
     "export_docx": {1: "export", 2: "export"},
     "export_pptx": {1: "export", 2: "export"},
 }
@@ -1100,6 +1116,7 @@ def _write_progress(
     """Write progress info to progress.json next to result.json."""
     try:
         p = Path(result_path).parent / "progress.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
         timestamp = _progress_timestamp()
         with PROGRESS_WRITE_LOCK:
             current: dict[str, Any] = {}
@@ -1146,7 +1163,7 @@ def _write_progress(
             if phase:
                 payload["phase"] = phase
                 payload["phase_label"] = _progress_phase_label(phase)
-            p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            p.write_text(safe_json_dumps(payload, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 

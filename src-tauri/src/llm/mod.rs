@@ -42,9 +42,17 @@ pub struct StreamChunk {
     pub done: bool,
 }
 
-fn provider_key(provider: &str) -> &str {
+/// Emitted for group chat — tagged with model_id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupChatChunk {
+    pub model_id: String,
+    pub delta: String,
+    pub done: bool,
+}
+
+pub fn provider_key(provider: &str) -> &str {
     match provider {
-        "claude" | "anthropic" | "openai" | "gpt" | "llm" => "llm",
+        "claude" | "anthropic" | "openai" | "gpt" | "llm" | "google" | "gemini" => "llm",
         "ollama" => "ollama",
         other => other,
     }
@@ -114,6 +122,37 @@ pub async fn route_stream(
     }
 }
 
+/// Route a streaming chat request with model_id tagging — emits `group-chat-chunk` events.
+/// Used by group_chat_stream to distinguish responses from multiple concurrent models.
+pub async fn route_stream_tagged(
+    mut request: ChatRequest,
+    api_keys: &std::collections::HashMap<String, String>,
+    base_urls: &std::collections::HashMap<String, String>,
+    app: &AppHandle,
+    model_id: &str,
+) -> Result<(), String> {
+    eprintln!("[stream_tagged] model_id={} provider={} model={}", model_id, request.provider, request.model);
+    match provider_key(request.provider.as_str()) {
+        "llm" => {
+            let key = api_keys.get("llm").ok_or("LLM API key not configured")?;
+            let base_url = base_urls.get("llm");
+            if uses_anthropic_api(base_url) {
+                request.provider = "claude".to_string();
+                claude::stream_chat_tagged(request, key, app, base_url, model_id).await
+            } else {
+                request.provider = "openai".to_string();
+                openai::stream_chat_tagged(request, key, app, base_url, model_id).await
+            }
+        }
+        "ollama" => {
+            request.provider = "ollama".to_string();
+            let base_url = base_urls.get("ollama");
+            ollama::stream_chat_tagged(request, app, base_url, model_id).await
+        }
+        other => Err(format!("Unknown provider: {}", other)),
+    }
+}
+
 /// Helper to emit a chunk event.
 pub fn emit_chunk(app: &AppHandle, delta: &str, done: bool) {
     let chunk = StreamChunk {
@@ -121,4 +160,14 @@ pub fn emit_chunk(app: &AppHandle, delta: &str, done: bool) {
         done,
     };
     let _ = app.emit("llm-chunk", &chunk);
+}
+
+/// Emit a tagged group-chat chunk.
+pub fn emit_group_chunk(app: &AppHandle, model_id: &str, delta: &str, done: bool) {
+    let chunk = GroupChatChunk {
+        model_id: model_id.to_string(),
+        delta: delta.to_string(),
+        done,
+    };
+    let _ = app.emit("group-chat-chunk", &chunk);
 }

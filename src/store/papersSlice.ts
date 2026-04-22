@@ -8,7 +8,15 @@ interface PapersState {
   error: string | null
   searchLoading: boolean
   downloadingId: string | null
+  crawlingId: string | null
   batchLoading: boolean
+  searchMeta: {
+    query?: string
+    result_count?: number
+    downloaded_count?: number
+    crawled_count?: number
+    crawl_failed?: number
+  } | null
 }
 
 const initialState: PapersState = {
@@ -17,7 +25,9 @@ const initialState: PapersState = {
   error: null,
   searchLoading: false,
   downloadingId: null,
+  crawlingId: null,
   batchLoading: false,
+  searchMeta: null,
 }
 
 export const fetchPapers = createAsyncThunk(
@@ -44,7 +54,15 @@ export const searchPapers = createAsyncThunk(
       params.download
     )
     if (!resp.success) throw new Error(resp.error || 'Search failed')
-    return resp.data as { results: ResearchWorkbenchPaper[]; indexed_count: number }
+    return resp.data as {
+      results: ResearchWorkbenchPaper[]
+      indexed_count: number
+      result_count: number
+      downloaded_count: number
+      crawled_count: number
+      crawl_failed: number
+      query: string
+    }
   }
 )
 
@@ -75,6 +93,24 @@ export const batchVerifyPapers = createAsyncThunk(
   }
 )
 
+export const crawlPaper = createAsyncThunk(
+  'papers/crawl',
+  async (recordId: string) => {
+    const resp = await api.crawlPaper(recordId)
+    if (!resp.success) throw new Error(resp.error || 'Crawl failed')
+    return resp.data as { paper: ResearchWorkbenchPaper }
+  }
+)
+
+export const batchCrawlPapers = createAsyncThunk(
+  'papers/batchCrawl',
+  async (recordIds: string[]) => {
+    const resp = await api.batchCrawl(recordIds)
+    if (!resp.success) throw new Error(resp.error || 'Batch crawl failed')
+    return resp.data
+  }
+)
+
 const papersSlice = createSlice({
   name: 'papers',
   initialState,
@@ -97,8 +133,19 @@ const papersSlice = createSlice({
         state.searchLoading = true
         state.error = null
       })
-      .addCase(searchPapers.fulfilled, (state) => {
+      .addCase(searchPapers.fulfilled, (state, action) => {
         state.searchLoading = false
+        const d = action.payload
+        if (d.results) {
+          state.items = d.results
+        }
+        state.searchMeta = {
+          query: d.query,
+          result_count: d.result_count,
+          downloaded_count: d.downloaded_count ?? 0,
+          crawled_count: d.crawled_count ?? 0,
+          crawl_failed: d.crawl_failed ?? 0,
+        }
       })
       .addCase(searchPapers.rejected, (state, action) => {
         state.searchLoading = false
@@ -107,8 +154,13 @@ const papersSlice = createSlice({
       .addCase(downloadPaper.pending, (state, action) => {
         state.downloadingId = action.meta.arg
       })
-      .addCase(downloadPaper.fulfilled, (state) => {
+      .addCase(downloadPaper.fulfilled, (state, action) => {
         state.downloadingId = null
+        const updated = action.payload?.paper
+        if (updated?.record_id) {
+          const idx = state.items.findIndex(p => p.record_id === updated.record_id)
+          if (idx >= 0) state.items[idx] = { ...state.items[idx], ...updated }
+        }
       })
       .addCase(downloadPaper.rejected, (state, action) => {
         state.downloadingId = null
@@ -133,6 +185,31 @@ const papersSlice = createSlice({
       .addCase(batchVerifyPapers.rejected, (state, action) => {
         state.batchLoading = false
         state.error = action.error.message || 'Batch verify failed'
+      })
+      .addCase(crawlPaper.pending, (state, action) => {
+        state.crawlingId = action.meta.arg
+      })
+      .addCase(crawlPaper.fulfilled, (state, action) => {
+        state.crawlingId = null
+        const updated = action.payload?.paper
+        if (updated?.record_id) {
+          const idx = state.items.findIndex(p => p.record_id === updated.record_id)
+          if (idx >= 0) state.items[idx] = { ...state.items[idx], ...updated }
+        }
+      })
+      .addCase(crawlPaper.rejected, (state, action) => {
+        state.crawlingId = null
+        state.error = action.error.message || 'Crawl failed'
+      })
+      .addCase(batchCrawlPapers.pending, (state) => {
+        state.batchLoading = true
+      })
+      .addCase(batchCrawlPapers.fulfilled, (state) => {
+        state.batchLoading = false
+      })
+      .addCase(batchCrawlPapers.rejected, (state, action) => {
+        state.batchLoading = false
+        state.error = action.error.message || 'Batch crawl failed'
       })
   },
 })

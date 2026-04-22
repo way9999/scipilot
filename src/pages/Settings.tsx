@@ -5,7 +5,7 @@ import { DISCIPLINE_OPTIONS } from '../types/workbench'
 import { useT } from '../i18n/context'
 import * as api from '../lib/tauri'
 
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'up_to_date' | 'downloading'
+type UpdateStatus = 'idle' | 'checking' | 'available' | 'up_to_date' | 'downloading' | 'error'
 
 type ConfigSlot = 'llm' | 'image_gen' | 'ollama'
 
@@ -74,6 +74,26 @@ const Settings: FC = () => {
   const [licenseActivating, setLicenseActivating] = useState(false)
   const t = useT()
 
+  const runUpdateCheck = () => {
+    setUpdateStatus('checking')
+    api.checkForUpdates().then((info) => {
+      setUpdateInfo(info)
+      if (info.available) {
+        setUpdateStatus('available')
+      } else if (info.error) {
+        setUpdateStatus('error')
+      } else {
+        setUpdateStatus('up_to_date')
+      }
+    }).catch((error) => {
+      setUpdateInfo({
+        available: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      setUpdateStatus('error')
+    })
+  }
+
   const disciplineLabels: Record<string, string> = {
     generic: t.discipline_generic,
     cs: t.discipline_cs,
@@ -88,13 +108,7 @@ const Settings: FC = () => {
   useEffect(() => {
     api.getProjectRoot().then(setProjectRoot).catch(() => {})
     api.getAppVersion().then(setAppVersion).catch(() => {})
-    setUpdateStatus('checking')
-    api.checkForUpdates().then((info) => {
-      setUpdateInfo(info)
-      setUpdateStatus(info.available ? 'available' : 'up_to_date')
-    }).catch(() => {
-      setUpdateStatus('up_to_date')
-    })
+    runUpdateCheck()
     // Load license status
     api.getLicenseStatus().then(setLicenseStatus).catch(() => {})
   }, [])
@@ -428,11 +442,33 @@ const Settings: FC = () => {
           <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
             {t.settings_update_current_version}: <code style={{ color: 'var(--text-primary)' }}>{appVersion || '—'}</code>
           </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={runUpdateCheck} style={buttonStyle}>
+              {t.settings_update_check_btn}
+            </button>
+            {updateInfo?.available && updateInfo.downloadUrl && updateInfo.source === 'manifest' && (
+              <button
+                onClick={() => api.downloadAndInstallUpdate()}
+                style={{ ...buttonStyle, background: 'var(--surface-secondary)' }}>
+                {t.settings_update_download_btn}
+              </button>
+            )}
+          </div>
           {updateStatus === 'checking' && (
             <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>{t.settings_update_checking}</div>
           )}
           {updateStatus === 'up_to_date' && (
             <div style={{ fontSize: 13, color: '#16a34a' }}>{t.settings_update_up_to_date}</div>
+          )}
+          {updateStatus === 'error' && (
+            <>
+              <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 600 }}>{t.settings_update_error}</div>
+              {updateInfo?.error && (
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', wordBreak: 'break-all' }}>
+                  {updateInfo.error}
+                </div>
+              )}
+            </>
           )}
           {updateStatus === 'available' && updateInfo && (
             <>
@@ -440,20 +476,25 @@ const Settings: FC = () => {
                 {t.settings_update_latest_version}: <code style={{ color: '#16a34a', fontWeight: 600 }}>{updateInfo.version}</code>
               </div>
               <div style={{ fontSize: 13, color: '#16a34a', fontWeight: 500 }}>{t.settings_update_available}</div>
-              <button
-                onClick={async () => {
-                  setUpdateStatus('downloading')
-                  setUpdateProgress({ downloaded: 0 })
-                  const success = await api.downloadAndInstallUpdate((progress) => {
-                    setUpdateProgress(progress)
-                  })
-                  if (!success) {
-                    setUpdateStatus('available')
-                  }
-                }}
-                style={{ ...buttonStyle, marginTop: 8 }}>
-                {t.settings_update_btn}
-              </button>
+              {updateInfo.source === 'manifest' && (
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{t.settings_update_manifest_fallback}</div>
+              )}
+              {updateInfo.source !== 'manifest' && (
+                <button
+                  onClick={async () => {
+                    setUpdateStatus('downloading')
+                    setUpdateProgress({ downloaded: 0 })
+                    const success = await api.downloadAndInstallUpdate((progress) => {
+                      setUpdateProgress(progress)
+                    })
+                    if (!success) {
+                      setUpdateStatus('available')
+                    }
+                  }}
+                  style={{ ...buttonStyle, marginTop: 8 }}>
+                  {t.settings_update_btn}
+                </button>
+              )}
             </>
           )}
           {updateStatus === 'downloading' && (

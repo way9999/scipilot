@@ -230,3 +230,75 @@ pub async fn stream_chat(
     emit_chunk(app, "", true);
     Ok(())
 }
+
+/// Streaming chat that emits tagged `group-chat-chunk` events (for multi-model group chat).
+pub async fn stream_chat_tagged(
+    request: ChatRequest,
+    api_key: &str,
+    app: &AppHandle,
+    base_url: Option<&String>,
+    model_id: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let resp = build_client_request(&client, &request, api_key, true, base_url)
+        .send()
+        .await
+        .map_err(|e| format!("Claude stream request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Claude API error {}: {}", status, text));
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut byte_buf: Vec<u8> = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream read error: {}", e))?;
+        byte_buf.extend_from_slice(&chunk);
+
+        loop {
+            let (sep, sep_len) = {
+                let nn = byte_buf.windows(2).position(|w| w == b"\n\n");
+                let rnrn = byte_buf.windows(4).position(|w| w == b"\r\n\r\n");
+                match (nn, rnrn) {
+                    (Some(a), Some(b)) if b < a => (b, 4),
+                    (Some(a), _) => (a, 2),
+                    (None, Some(b)) => (b, 4),
+                    (None, None) => break,
+                }
+            };
+            let event_bytes = byte_buf[..sep].to_vec();
+            byte_buf = byte_buf[sep + sep_len..].to_vec();
+            let event_block = match String::from_utf8(event_bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            for line in event_block.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                        let event_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if let Some(delta_text) = parsed
+                            .get("delta")
+                            .and_then(|d| d.get("text"))
+                            .and_then(|t| t.as_str())
+                        {
+                            if !delta_text.is_empty() {
+                                super::emit_group_chunk(app, model_id, delta_text, false);
+                            }
+                        }
+                        if event_type == "message_stop" {
+                            super::emit_group_chunk(app, model_id, "", true);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    super::emit_group_chunk(app, model_id, "", true);
+    Ok(())
+}

@@ -173,6 +173,17 @@ class WritingTaskManagerTests(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["error"], "Task exited unexpectedly (exit code 193).")
 
+    def test_write_progress_sanitizes_surrogate_text(self) -> None:
+        result_path = self._tempdir / "surrogate-task" / "result.json"
+
+        writing._write_progress(str(result_path), 1, 6, "阶段\ud835", "细节\ud835", phase="enhance")
+
+        progress = json.loads((result_path.parent / "progress.json").read_text(encoding="utf-8"))
+
+        self.assertNotIn("\ud835", progress["label"])
+        self.assertNotIn("\ud835", progress["detail"])
+        self.assertEqual(progress["phase"], "enhance")
+
 
 if __name__ == "__main__":
     unittest.main()

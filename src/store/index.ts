@@ -4,6 +4,7 @@ import researchReducer from './researchSlice'
 import papersReducer from './papersSlice'
 import settingsReducer from './settingsSlice'
 import chatReducer from './chatSlice'
+import groupChatReducer from './groupChatSlice'
 
 export const store = configureStore({
   reducer: {
@@ -11,6 +12,7 @@ export const store = configureStore({
     papers: papersReducer,
     settings: settingsReducer,
     chat: chatReducer,
+    groupChat: groupChatReducer,
   },
 })
 

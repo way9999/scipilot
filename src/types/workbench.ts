@@ -17,6 +17,13 @@ export interface ResearchWorkbenchPaper {
   verified?: boolean
   downloaded?: boolean
   citation_count?: number
+  content_path?: string
+  content_json_path?: string
+  content_crawled?: boolean
+  content_source?: string
+  content_excerpt?: string
+  content_word_count?: number
+  content_updated_at?: string
 }
 
 export interface ResearchProjectState {
@@ -290,4 +297,5 @@ export interface ExportPptxRequest {
   topic?: string
   language: 'auto' | 'zh' | 'en'
   deckType: 'proposal_review' | 'lab_update' | 'conference'
+  widescreen?: boolean
 }

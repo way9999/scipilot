@@ -1,7 +1,10 @@
-import { type CSSProperties, type FC, useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { type CSSProperties, type FC, type ReactNode, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import mammoth from 'mammoth'
+import 'katex/dist/katex.min.css'
 import { useAppDispatch, useAppSelector } from '../store'
 import { createConversation } from '../store/chatSlice'
 import { fetchDashboard, refreshWorkbench } from '../store/researchSlice'
@@ -77,6 +80,24 @@ function isRefinableDraftPath(path: string): boolean {
 
 function fileName(path: string): string {
   return path.split('/').slice(-1)[0] || path
+}
+
+function flattenMarkdownText(children: ReactNode): string {
+  return (
+    Array.isArray(children) ? children : [children]
+  )
+    .map((child) => {
+      if (typeof child === 'string' || typeof child === 'number') {
+        return String(child)
+      }
+      if (child && typeof child === 'object' && 'props' in child) {
+        return flattenMarkdownText((child as { props?: { children?: ReactNode } }).props?.children ?? null)
+      }
+      return ''
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function inferArtifactKindFromPath(path: string): ExportArtifactOption | null {
@@ -896,23 +917,29 @@ Always use proper academic tone and cite sources when possible. Output in Markdo
               dangerouslySetInnerHTML={{ __html: docxHtml[expandedArtifact] }}
             />
           ) : isMarkdownArtifact(expandedArtifact) ? (
-            <div style={{ padding: 18, color: 'var(--text-primary)', lineHeight: 1.8, fontSize: 14 }}>
+            <div className="markdown-body thesis-preview" style={{ padding: 18, color: 'var(--text-primary)', lineHeight: 1.8, fontSize: 14 }}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
                 components={{
                   a: (props) => <a {...props} style={{ color: 'var(--accent)' }} />,
-                  code: ({ children, ...props }) => (
-                    <code
-                      {...props}
-                      style={{
-                        padding: '2px 6px',
-                        borderRadius: 6,
-                        background: 'rgba(15, 23, 42, 0.08)',
-                        fontSize: '0.92em',
-                      }}>
-                      {children}
-                    </code>
-                  ),
+                  code: ({ children, className, ...props }) =>
+                    className ? (
+                      <code {...props} className={className}>
+                        {children}
+                      </code>
+                    ) : (
+                      <code
+                        {...props}
+                        style={{
+                          padding: '2px 6px',
+                          borderRadius: 6,
+                          background: 'rgba(15, 23, 42, 0.08)',
+                          fontSize: '0.92em',
+                        }}>
+                        {children}
+                      </code>
+                    ),
                   pre: ({ children, ...props }) => (
                     <pre
                       {...props}
@@ -925,18 +952,55 @@ Always use proper academic tone and cite sources when possible. Output in Markdo
                       {children}
                     </pre>
                   ),
+                  p: ({ children, ...props }) => {
+                    const text = flattenMarkdownText(children)
+                    if (/^(图|Figure)\s*\d+-\d+\s+/.test(text)) {
+                      return (
+                        <p {...props} className="markdown-figure-caption">
+                          {children}
+                        </p>
+                      )
+                    }
+                    if (/^(表|Table)\s*\d+(?:[.-]\d+)?\s+/.test(text)) {
+                      return (
+                        <p {...props} className="markdown-table-caption">
+                          {children}
+                        </p>
+                      )
+                    }
+                    if (/^\[(图|Figure)\s*占位[:：\]]/.test(text) || /^待补(图|Figure)/.test(text)) {
+                      return (
+                        <p {...props} className="markdown-figure-placeholder-title">
+                          {children}
+                        </p>
+                      )
+                    }
+                    return <p {...props}>{children}</p>
+                  },
+                  img: ({ ...props }) => <img {...props} className="markdown-figure-image" loading="lazy" />,
+                  blockquote: ({ children, ...props }) => {
+                    const text = flattenMarkdownText(children)
+                    const className = text.includes('占位') || text.includes('待补图') ? 'markdown-placeholder-callout' : undefined
+                    return (
+                      <blockquote {...props} className={className}>
+                        {children}
+                      </blockquote>
+                    )
+                  },
                   table: ({ children, ...props }) => (
-                    <table {...props} style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      {children}
-                    </table>
+                    <div className="markdown-table-wrap">
+                      <table {...props} className="markdown-thesis-table">
+                        {children}
+                      </table>
+                    </div>
                   ),
                   th: ({ children, ...props }) => (
-                    <th {...props} style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+                    <th {...props} style={{ textAlign: 'left', padding: '10px 12px' }}>
                       {children}
                     </th>
                   ),
                   td: ({ children, ...props }) => (
-                    <td {...props} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+                    <td {...props} style={{ padding: '9px 12px' }}>
                       {children}
                     </td>
                   ),
@@ -1111,6 +1175,13 @@ Always use proper academic tone and cite sources when possible. Output in Markdo
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
+          {exportArtifact === 'presentation' && (
+            <div style={{ fontSize: '0.78em', color: 'var(--text-secondary)', marginTop: 4 }}>
+              {deckType === 'proposal_review' && t.writing_deck_proposal_desc}
+              {deckType === 'lab_update' && t.writing_deck_lab_desc}
+              {deckType === 'conference' && t.writing_deck_conference_desc}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 use crate::llm::{self, ChatMessage, ChatRequest};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestConnectionResponse {
@@ -124,7 +124,7 @@ fn image_generation_endpoint(base_url: &str) -> String {
 fn image_generation_fallback_endpoint(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
     let api_root = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
-    format!("{}/v1/chat/completions", api_root)
+    format!("{}/v1/chat/completations", api_root)
 }
 
 async fn test_image_generation_connection(
@@ -324,4 +324,107 @@ pub async fn test_llm_connection(
             message: e,
         }),
     }
+}
+
+// ── Multi-model group chat commands ──────────────────────────────────
+
+/// A single model's config for group chat streaming.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GroupModelRequest {
+    pub model_id: String,
+    pub provider: String,
+    pub model: String,
+    pub system_prompt: Option<String>,
+}
+
+/// Stream multiple LLMs concurrently. Each model emits `group-chat-chunk`
+/// events tagged with its `model_id`.
+///
+/// Uses inline SSE parsing per model to avoid the cross-contamination issue
+/// with `app.listen()` (which receives ALL events globally).
+#[tauri::command]
+pub async fn group_chat_stream(
+    state: State<'_, AppState>,
+    requests: Vec<GroupModelRequest>,
+    history: Vec<ChatMessage>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    eprintln!("[group_chat] {} requests", requests.len());
+    let api_keys = state.api_keys.lock().map_err(|e| e.to_string())?.clone();
+    let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    let mut base_urls = settings.api_base_urls.clone();
+
+    // Normalize base URLs (same as get_llm_config does)
+    for req in &requests {
+        let provider = req.provider.as_str();
+        if let Some(raw) = base_urls.get(provider).cloned() {
+            let normalized = normalize_base_url(provider, &raw);
+            base_urls.insert(provider.to_string(), normalized);
+        } else if let Some(raw) = base_urls.get("llm").cloned() {
+            let normalized = normalize_base_url("llm", &raw);
+            base_urls.insert("llm".to_string(), normalized);
+        }
+    }
+
+    let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    for req in requests {
+        let api_keys = api_keys.clone();
+        let base_urls = base_urls.clone();
+        let history = history.clone();
+        let app = app.clone();
+        let model_id = req.model_id.clone();
+        let system_prompt = req.system_prompt.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut messages = Vec::new();
+
+            if let Some(sys) = system_prompt {
+                messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: sys,
+                });
+            }
+            messages.extend(history);
+
+            let chat_request = ChatRequest {
+                provider: req.provider.clone(),
+                model: req.model.clone(),
+                messages,
+                max_tokens: Some(4096),
+                temperature: Some(0.7),
+                stream: true,
+            };
+
+            // Route to the correct stream handler and emit tagged group-chat-chunk events
+            let result = llm::route_stream_tagged(
+                chat_request,
+                &api_keys,
+                &base_urls,
+                &app,
+                &model_id,
+            )
+            .await;
+
+            if let Err(e) = result {
+                eprintln!("[group_chat] stream error for {}: {}", model_id, e);
+                let _ = app.emit(
+                    "group-chat-chunk",
+                    &llm::GroupChatChunk {
+                        model_id,
+                        delta: format!("[Error: {}]", e),
+                        done: true,
+                    },
+                );
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    Ok(())
 }
