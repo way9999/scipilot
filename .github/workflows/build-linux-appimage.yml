@@ -1,4 +1,4 @@
-  name: build-linux-appimage
+ name: build-linux-appimage
 
   on:
     workflow_dispatch:
@@ -12,23 +12,24 @@
 
       steps:
         - name: Checkout
-          uses: actions/checkout@v4
-
-        - name: Setup Python
-          uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
-
-        - name: Setup Node
-          uses: actions/setup-node@v4
-          with:
-            node-version: "20"
-            cache: "pnpm"
+          uses: actions/checkout@v6
 
         - name: Setup pnpm
-          uses: pnpm/action-setup@v4
+          uses: pnpm/action-setup@v6
           with:
             version: 10
+
+        - name: Setup Node
+          uses: actions/setup-node@v6
+          with:
+            node-version: "24"
+            cache: "pnpm"
+            cache-dependency-path: pnpm-lock.yaml
+
+        - name: Setup Python
+          uses: actions/setup-python@v6
+          with:
+            python-version: "3.11"
 
         - name: Setup Rust
           uses: dtolnay/rust-toolchain@stable
@@ -58,6 +59,7 @@
 
         - name: Read version
           id: version
+          shell: bash
           run: |
             python - <<'PY'
             import json
@@ -67,7 +69,6 @@
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
                 fh.write(f"version={version}\n")
             PY
-          shell: bash
 
         - name: Seed existing latest.json from release
           env:
