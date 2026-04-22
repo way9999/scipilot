@@ -1,4 +1,4 @@
- name: build-linux-appimage
+  name: build-linux-appimage
 
   on:
     workflow_dispatch:
@@ -105,8 +105,6 @@
             gh release upload "v${{ steps.version.outputs.version }}" \
               -R "${{ github.repository }}" \
               --clobber \
-              release/${{ steps.version.outputs.version }}/*
-
         - name: Upload release artifacts
           uses: actions/upload-artifact@v4
           with:
