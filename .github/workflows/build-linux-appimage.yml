@@ -1,4 +1,104 @@
- - name: Upload Linux release assets
+  name: build-linux-appimage
+
+  on:
+    workflow_dispatch:
+
+  permissions:
+    contents: write
+
+  jobs:
+    build:
+      runs-on: ubuntu-22.04
+
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v6
+
+        - name: Setup pnpm
+          uses: pnpm/action-setup@v4
+          with:
+            version: 10
+
+        - name: Setup Node
+          uses: actions/setup-node@v6
+          with:
+            node-version: "24"
+            cache: "pnpm"
+            cache-dependency-path: pnpm-lock.yaml
+
+        - name: Setup Python
+          uses: actions/setup-python@v6
+          with:
+            python-version: "3.11"
+
+        - name: Setup Rust
+          uses: dtolnay/rust-toolchain@stable
+
+        - name: Install Linux build dependencies
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y \
+              libwebkit2gtk-4.1-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev \
+              patchelf
+
+        - name: Install Python build tooling
+          run: python -m pip install --upgrade pip pyinstaller
+
+        - name: Install frontend dependencies
+          run: pnpm install --frozen-lockfile
+
+        - name: Write updater signing key
+          env:
+            SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          run: |
+            mkdir -p .tauri
+            printf '%s' "$SIGNING_KEY" > .tauri/updater.key
+            test -s .tauri/updater.key
+
+        - name: Read version
+          id: version
+          shell: bash
+          run: |
+            python - <<'PY'
+            import json
+            import os
+            from pathlib import Path
+            version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                fh.write(f"version={version}\n")
+            PY
+
+        - name: Seed existing latest.json from release
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: |
+            mkdir -p .tmp-release
+            gh release download "v${{ steps.version.outputs.version }}" \
+              -R "${{ github.repository }}" \
+              -p latest.json \
+              -D .tmp-release || true
+
+        - name: Build Linux AppImage release artifacts
+          env:
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          run: |
+            python scripts/build_release.py \
+              --repo "${{ github.repository }}" \
+              --seed-manifest ".tmp-release/latest.json"
+
+        - name: Ensure release exists
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: |
+            gh release view "v${{ steps.version.outputs.version }}" -R "${{ github.repository }}" >/dev/null 2>&1 \
+              || gh release create "v${{ steps.version.outputs.version }}" \
+                -R "${{ github.repository }}" \
+                --title "SciPilot ${{ steps.version.outputs.version }}" \
+                --notes "SciPilot ${{ steps.version.outputs.version }}"
+
+        - name: Upload Linux release assets
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           shell: bash
@@ -14,3 +114,10 @@
               -R "${{ github.repository }}" \
               --clobber \
               "${files[@]}"
+
+        - name: Upload release artifacts
+          uses: actions/upload-artifact@v4
+          with:
+            name: scipilot-linux-${{ steps.version.outputs.version }}
+            path: release/${{ steps.version.outputs.version }}/
+            if-no-files-found: error
